@@ -1,0 +1,81 @@
+[Automatizált Multi-Tier Webalkalmazás Telepítés (VProfile Project)]
+
+# 1. Bevezetés
+       Cél: A teljes webalkalmazás-stack (Nginx, Tomcat, RabbitMQ, Memcached, MySQL) automatikus telepítése.
+       Fő előnyök:
+         Egyszerű indítás: csak vagrant up
+         Automatikus VM létrehozás és szolgáltatás-telepítés bash scriptek segítségével
+         Megismételhető, gyorsan újraindítható környezet (Infrastructure as Code)
+
+# 2. Használt eszközök & környezet
+     Eszközök:
+       Oracle VirtualBox
+       Vagrant + vagrant-hostmanager plugin
+       Git Bash / Terminal
+       Visual Studio Code
+     Fájlstruktúra:
+       vagrant/Automated_provisioning_WinMacIntel (vagy Mac ARM esetén külön könyvtár)
+       Minden VM-hez külön .sh script tartozik (pl. mysql.sh, memcached.sh, stb.)
+
+# 3. Automatizált konfiguráció logikája
+       A Vagrantfile tartalmazza minden VM definícióját + a hozzárendelt bash scriptet.
+       A bash scriptek lépésenként végrehajtják a szükséges telepítéseket és konfigurációkat:
+         mysql.sh -> DB setup, adatbázis importálása, user létrehozás
+         memcached.sh -> cache szolgáltatás konfigurálása
+         rabbitmq.sh -> queue rendszer telepítése és user beállítás
+         tomcat.sh + maven -> Java alkalmazás build és deploy
+         nginx.sh -> fordított proxy és load balancer beállítás
+       A cat <<EOF ... EOF szintaxis segítségével teljes fájlokat generálnak (pl. tomcat.service, nginx.conf)
+
+# 4. Végrehajtás lépésről lépésre
+       Előkészületek
+         a. Kódbázis klónozása:
+
+           git clone -b local https://github.com/hkhcoder/vprofile-project.git
+
+         b. Branch váltás: main -> origin/local
+         c. Plugin telepítés:
+
+           vagrant plugin install vagrant-hostmanager
+
+Automatikus futtatás
+  1. Navigálj a megfelelő mappába:
+       cd vprofile-project/vagrant/Automated_provisioning_WinMacIntel
+  2. Futtasd az egészet:
+
+       vagrant up
+
+  Lépésenkénti provisioning:
+    db01 -> mc01 -> rmq01 -> app01 -> web01
+  Időtartam: ~15–30 perc (internet- és gépteljesítménytől függően)
+
+# 5. Validáció
+       a. IP-cím vagy hostname használata:
+
+         http://192.168.56.11 vagy http://web01
+
+       b. Bejelentkezés:
+            Felhasználónév: admin_vp
+            Jelszó: admin_vp
+       c. Tesztfunkciók:
+            RabbitMQ: Queue generálás
+            Memcache: Felhasználó betöltése -> gyors visszatérés cache-ből
+
+# 6. VM-ek kezelése
+       Leállítás:
+
+         vagrant halt
+
+       Törlés (ha nincs többé szükséged a környezetre):
+
+         vagrant destroy --force
+
+       Újraindítás:
+
+         vagrant up
+
+# 7. Összefoglalás
+       Egyetlen paranccsal automatikus környezet-hozzárendelés és szolgáltatáskonfiguráció
+       Megismételhető, tesztelhető, CI/CD-hez előkészített architektúra
+       Bash scripting és IAC bevezetés gyakorlati környezeten
+       Nem szükséges kézzel belépni a VM-ekbe (vagrant ssh)

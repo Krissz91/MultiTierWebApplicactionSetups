@@ -1,0 +1,261 @@
+=======================================================================================================================
+
+[Multi Tier Web Application – Helyi Projektösszeállítás (VProfile Project)]
+
+# 1. Bevezetés
+  Cél: Többrétegű webalkalmazás lokális felállítása Vagrant + VirtualBox segítségével.
+  Hasznosság:
+    Alapozás jövőbeli projektekhez (konténerizálás, Kubernetes, CI/CD stb.).
+    Helyi tesztkörnyezet és gyakorlási lehetőség saját projektekhez.
+
+# 2. Technológiai stack (alkalmazások és szolgáltatások)
+  Frontend (Load Balancer): Nginx
+  Application server: Tomcat/Maven (Java alkalmazással)
+  Cache: Memcached
+  Message Broker: RabbitMQ
+  Adatbázis: MySQL (MariaDB)
+  Automatizálás: Vagrant
+  Hypervisor: VirtualBox
+
+# 3. Szükséges eszközök
+  Git Bash
+  IDE (pl. VS Code)
+  Oracle VirtualBox
+  Vagrant + vagrant-hostmanager plugin
+
+# 4. Architektúra és adatfolyam
+  Felhasználó -> Nginx (web01) -> Tomcat (app01) -> RabbitMQ (rmq01) -> Memcached (mc01) -> MySQL (db01)
+    Memcached gyorsítótárazza az adatokat, hogy csökkentse DB lekérdezéseket.
+    RabbitMQ csak „díszítő” elem, de gyakorlásra alkalmas.
+    Minden VM külön szolgáltatást futtat.
+
+# 5. Virtuális gépek beállítása
+  Repo klónozása:
+    git clone -b local https://github.com/hkhcoder/vprofile-project.git
+  Branch váltás: main -> origin/local
+  Plugin telepítés:
+    vagrant plugin install vagrant-hostmanager
+  VM-ek indítása:
+    vagrant up (5 VM indul: db01, mc01, rmq01, app01, web01)
+  Host bejegyzések automatikusan frissülnek.
+
+# 6. Szolgáltatások telepítése
+  MySQL (db01)
+  MariaDB telepítése -> adatbázis (accounts) + user (admin/admin123) létrehozása.
+  Adatbázis dump betöltése: db_backup.sql
+  Port 3306 engedélyezése, ha szükséges.
+
+Login to the db vm -> vagrant ssh db01
+sudo -i
+Verify Hosts entry, if entries missing update the it with IP and hostnames -> cat /etc/hosts
+Update OS with latest patches -> dnf update -y
+Set Repository -> dnf install epel-release -y
+Install Maria DB Package -> dnf install git mariadb-server -y
+Starting & enabling mariadb-server -> systemctl start mariadb -> systemctl enable mariadb
+Check the status -> systemctl status mariadb
+RUN mysql secure installation script. -> mysql_secure_installation
+Enter, Y, Y, New password = admin123, Re-enter new password = admin123, Y, Y, Y
+Set DB name and users. -> mysql -u root -padmin123
+mysql> create database accounts;
+mysql> grant all privileges on accounts.* TO 'admin'@'localhost' identified by 'admin123';
+mysql> grant all privileges on accounts.* TO 'admin'@'%' identified by 'admin123';
+mysql> FLUSH PRIVILEGES;
+mysql> exit
+Download Source code & Initialize Database. -> cd /tmp/
+then -> git clone -b local https://github.com/hkhcoder/vprofile-project.git
+then -> cd vprofile-project
+check something -> ls src/main/resources/ -> we need to see a db_backup.sql file
+mysql -u root -padmin123 accounts < src/main/resources/db_backup.sql
+mysql -u root -padmin123 accounts
+mysql> show tables;
+mysql> show databases;
+mysql> exit
+Restart mariadb-server -> systemctl restart mariadb
+Starting the firewall and allowing the mariadb to access from port no. 3306
+systemctl start firewalld
+systemctl enable firewalld
+firewall-cmd --get-active-zones
+firewall-cmd --zone=public --add-port=3306/tcp --permanent
+firewall-cmd --reload
+systemctl restart mariadb
+
+===================================================================================================
+
+  Memcached (mc01)
+  Telepítés, konfiguráció IP hallgatásra: 0.0.0.0
+  Port 11211 beállítása.
+  Távoli elérés biztosítása.
+
+Login to the Memcache vm -> vagrant ssh mc01
+Verify Hosts entry, if entries missing update the it with IP and hostnames -> cat /etc/hosts
+Update OS with latest patches -> dnf update -y
+Install, start & enable memcache on port 11211 -> sudo dnf install epel-release -y ->
+sudo dnf install memcached -y
+sudo systemctl start memcached
+sudo systemctl enable memcached
+sudo systemctl status memcached
+sed -i 's/127.0.0.1/0.0.0.0/g' /etc/sysconfig/memcached
+sudo systemctl restart memcached
+Starting the firewall and allowing the port 11211 to access memcache -> systemctl start firewalld ->
+systemctl enable firewalld
+firewall-cmd --add-port=11211/tcp
+firewall-cmd --runtime-to-permanent
+firewall-cmd --add-port=11111/udp
+firewall-cmd --runtime-to-permanent
+sudo memcached -p 11211 -U 11111 -u memcached -d
+
+===================================================================================================
+
+  RabbitMQ (rmq01)
+  Repo hozzáadása -> telepítés
+  User test/test létrehozása + jogosultság beállítás.
+  Port 5672 beállítása.
+
+Login to the RabbitMQ vm -> vagrant ssh rmq01
+Verify Hosts entry, if entries missing update the it with IP and hostnames -> cat /etc/hosts
+Update OS with latest patches -> dnf update -y
+Set EPEL Repository -> dnf install epel-release -y
+Install Dependencies -> sudo dnf install wget -y ->
+dnf -y install centos-release-rabbitmq-38
+dnf --enablerepo=centos-rabbitmq-38 -y install rabbitmq-server
+systemctl enable --now rabbitmq-server
+Setup access to user test and make it admin -> sudo sh -c 'echo "[{rabbit, [{loopback_users, []}]}]." > /etc/rabbitmq/rabbitmq.config' ->
+sudo systemctl restart rabbitmq-server
+sudo rabbitmqctl add_user test test
+sudo rabbitmqctl set_user_tags test administrator
+rabbitmqctl set_permissions -p / test ".*" ".*" ".*"
+sudo systemctl restart rabbitmq-server
+sudo systemctl status rabbitmq-server
+Starting the firewall and allowing the port 5672 to access rabbitmq
+sudo systemctl start firewalld
+sudo systemctl enable firewalld
+firewall-cmd --add-port=5672/tcp
+firewall-cmd --runtime-to-permanent
+sudo systemctl start rabbitmq-server
+sudo systemctl enable rabbitmq-server
+sudo systemctl status rabbitmq-server
+
+===================================================================================================
+
+  Tomcat + Java alkalmazás (app01)
+  JDK 17, Tomcat 10 + Maven telepítése
+  Projekt buildelése Maven-nel: mvn install
+  WAR fájl (vprofile-v2.war) -> Tomcat ROOT.war mappába
+  Tomcat újraindítása
+
+Login to the tomcat vm -> vagrant ssh app01
+Verify Hosts entry, if entries missing update the it with IP and hostnames -> cat /etc/hosts
+Update OS with latest patches -> dnf update -y
+Set Repository -> dnf install epel-release -y
+Install Dependencies -> dnf -y install java-17-openjdk java-17-openjdk-devel -> dnf install git wget -y
+Change dir to /tmp -> cd /tmp/
+Download & Tomcat Package -> wget https://archive.apache.org/dist/tomcat/tomcat-10/v10.1.26/bin/apache-tomcat-10.1.26.tar.gz -> tar -xzvf apache-tomcat-10.1.26.tar.gz
+Add tomcat user -> useradd --home-dir /usr/local/tomcat --shell /sbin/nologin tomcat
+Copy data to tomcat home dir -> cp -r /tmp/apache-tomcat-10.1.26/* /usr/local/tomcat/
+Make tomcat user owner of tomcat home dir -> chown -R tomcat.tomcat /usr/local/tomcat
+Check it -> ls -l /usr/local/tomcat/
+Setup systemctl command for tomcat
+Create tomcat service file -> nano /etc/systemd/system/tomcat.service
+Update the file with below content
+
+[Unit]
+Description=Tomcat
+After=network.target
+
+[Service]
+User=tomcat
+Group=tomcat
+WorkingDirectory=/usr/local/tomcat
+Environment=JAVA_HOME=/usr/lib/jvm/jre
+Environment=CATALINA_PID=/var/tomcat/%i/run/tomcat.pid
+Environment=CATALINA_HOME=/usr/local/tomcat
+Environment=CATALINE_BASE=/usr/local/tomcat
+ExecStart=/usr/local/tomcat/bin/catalina.sh run
+ExecStop=/usr/local/tomcat/bin/shutdown.sh
+RestartSec=10
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+
+Reload systemd files -> systemctl daemon-reload
+Start & Enable service -> systemctl start tomcat -> systemctl enable tomcat
+Check it -> systemctl status tomcat
+Enabling the firewall and allowing port 8080 to access the tomcat
+systemctl start firewalld
+systemctl enable firewalld
+firewall-cmd --get-active-zones
+firewall-cmd --zone=public --add-port=8080/tcp --permanent
+firewall-cmd --reload
+
+Maven Setup
+cd /tmp/
+wget https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.zip
+unzip apache-maven-3.9.9-bin.zip
+If it isn't working then -> sudo dnf install unzip
+cp -r apache-maven-3.9.9 /usr/local/maven3.9
+export MAVEN_OPTS="-Xmx512m"
+Download Source code -> git clone -b local https://github.com/hkhcoder/vprofile-project.git
+Update configuration -> cd vprofile-project ->
+nano src/main/resources/application.properties
+Update file with backend server details if you need.
+Build code
+Run below command inside the repository (vprofile-project) -> /usr/local/maven3.9/bin/mvn install
+Deploy artifact -> rm -rf /usr/local/tomcat/webapps/ROOT
+cp target/vprofile-v2.war /usr/local/tomcat/webapps/ROOT.war
+chown tomcat.tomcat /usr/local/tomcat/webapps -R
+systemctl restart tomcat
+systemctl status tomcat
+
+===================================================================================================
+
+  Nginx (web01)
+  Nginx telepítése
+  Host fájl: vproapp -> app01:8080 proxy beállítás
+  Default site törlése -> új site engedélyezése -> Nginx újraindítása
+
+Login to the Nginx vm -> vagrant ssh web01 -> sudo -i
+Verify Hosts entry, if entries missing update the it with IP and hostnames -> cat /etc/hosts
+Update OS with latest patches -> apt update && apt upgrade -y
+Install nginx -> apt install nginx -y
+Create Nginx conf file -> nano /etc/nginx/sites-available/vproapp
+Update with below content
+
+upstream vproapp {
+  server app01:8080;
+}
+
+server {
+  listen 80;
+  location / {
+  proxy_pass http://vproapp;
+ }
+}
+
+Remove default nginx conf -> rm -rf /etc/nginx/sites-enabled/default
+Create link to activate website -> ln -s /etc/nginx/sites-available/vproapp /etc/nginx/sites-enabled/vproapp
+Restart Nginx -> systemctl restart nginx
+Check it -> systemctl status nginx
+
+===================================================================================================
+
+# 7. Tesztelés & Validáció
+  Cím: http://192.168.56.11
+  Bejelentkezés:
+    Felhasználónév: admin_vp
+    Jelszó: admin_vp
+  Validáció:
+    Weboldal betölt -> Nginx működik
+    Belépés sikeres -> DB kapcsolat él
+    RabbitMQ gomb -> üzenetküldési képesség
+    Memcache teszt -> gyors visszatérés cache-ből
+
+# 8. Újratelepítés vagy leállítás
+  VM leállítás: vagrant halt
+  Teljes törlés: vagrant destroy --force
+
+# 9. Összegzés
+  Ez a projekt egy komplex, valós életből vett architektúra lokális leképezése, amely ideális terep gyakorlásra:
+  DevOps alapismeretek (VM-ek, szolgáltatások, konfigurációk)
+  Alkalmazás bevezetés és hibakeresés logikai sorrendben
+  Automatizálható, újrahasználható környezet
