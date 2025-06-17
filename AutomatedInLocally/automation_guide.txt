@@ -31,7 +31,7 @@
        Előkészületek
          a. Kódbázis klónozása:
 
-           git clone -b local https://github.com/hkhcoder/vprofile-project.git
+           git clone -b local https://github.com/.....
 
          b. Branch váltás: main -> origin/local
          c. Plugin telepítés:

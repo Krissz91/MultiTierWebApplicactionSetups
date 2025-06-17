@@ -31,7 +31,7 @@
 
 # 5. Virtuális gépek beállítása
   Repo klónozása:
-    git clone -b local https://github.com/hkhcoder/vprofile-project.git
+    git clone -b local https://github.com/.....
   Branch váltás: main -> origin/local
   Plugin telepítés:
     vagrant plugin install vagrant-hostmanager
@@ -62,7 +62,7 @@ mysql> grant all privileges on accounts.* TO 'admin'@'%' identified by 'admin123
 mysql> FLUSH PRIVILEGES;
 mysql> exit
 Download Source code & Initialize Database. -> cd /tmp/
-then -> git clone -b local https://github.com/hkhcoder/vprofile-project.git
+then -> git clone -b local https://github.com/.....
 then -> cd vprofile-project
 check something -> ls src/main/resources/ -> we need to see a db_backup.sql file
 mysql -u root -padmin123 accounts < src/main/resources/db_backup.sql
@@ -195,7 +195,7 @@ unzip apache-maven-3.9.9-bin.zip
 If it isn't working then -> sudo dnf install unzip
 cp -r apache-maven-3.9.9 /usr/local/maven3.9
 export MAVEN_OPTS="-Xmx512m"
-Download Source code -> git clone -b local https://github.com/hkhcoder/vprofile-project.git
+Download Source code -> git clone -b local https://github.com/.......
 Update configuration -> cd vprofile-project ->
 nano src/main/resources/application.properties
 Update file with backend server details if you need.
