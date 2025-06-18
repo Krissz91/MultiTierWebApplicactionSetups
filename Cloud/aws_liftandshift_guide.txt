@@ -1,0 +1,171 @@
+[AWS Lift & Shift Webalkalmazás Projekt – vProfile]
+Cél: Lokálisan működő alkalmazás (vProfile) áthelyezése AWS környezetbe – teljes infrastruktúra automatizáltan és skálázhatóan
+
+# 1. Projekt Áttekintés
+       Stratégia: Lift & Shift – meglévő alkalmazás (vProfile) átvitele a felhőbe minimális módosítással
+       Motiváció: Lokális VM-ek kezelése költséges, nehezen skálázható -> AWS rugalmasság, fizetés használat szerint, skálázás, automatizálás
+       Technológiák:
+         Compute: EC2 (Tomcat, MySQL, Memcached, RabbitMQ)
+         Load balancing: ALB (Application Load Balancer)
+         Skálázás: Auto Scaling Group
+         Tárolás: S3 (artifact-ekhez)
+         DNS: Route53 (private zone)
+         Biztonság: IAM, biztonsági csoportok
+         Automatizálás: UserData (Bash scriptek)
+
+# 2. Architektúra Áttekintés
+
+Felhasználó
+   ↓
+GoDaddy DNS -> ALB (HTTPS, ACM cert)
+   ↓
+App EC2 (Tomcat – autoscaling)
+   ↓
+Route 53 private DNS
+   ↓
+Backend EC2 (MySQL, Memcached, RabbitMQ)
+
+  Nginx helyett ALB
+  Lokális /etc/hosts helyett -> Route53
+  Biztonság: Szétválasztott security group-ok minden komponensre
+
+  GoDaddy(DNS Zone) -> users -> application load balancer(security group) ->8080-> security group(tomcat instances with auto scaling, route 53,s3 bucket) -> security group(Memcache,rabbitmq,sql)
+  
+# 3. Biztonsági csoportok & kulcsok
+       Security Group-ok:
+       1. vprofile-ELB-sg -> 443 (HTTPS) forgalom bárhonnan
+       2. vprofile-app-sg -> 8080 csak ELB-től, SSH saját IP-ről
+       3. vprofile-backend-sg -> 3306, 11211, 5672 csak app-sg-től, SSH saját IP-ről
+            Belső kommunikáció engedélyezése (self-referencing rule)
+       Kulcspár:
+         vprofile-prod-key.pem -> SSH belépés EC2-re (letöltve)
+
+# 4. EC2 példányok létrehozása (UserData scriptekkel)
+Szerep    AMI típusa	     UserData script  Security Group
+MySQL     Amazon Linux 2023  mysql.sh         vprofile-backend-sg
+Memcached Amazon Linux 2023  memcache.sh      vprofile-backend-sg
+RabbitMQ  Amazon Linux 2023  rabbitmq.sh      vprofile-backend-sg
+Tomcat    Ubuntu 24.04       tomcat_ubuntu.sh vprofile-app-sg
+
+A script-ek automatikusan telepítik a szolgáltatásokat, konfigurálják a fájlokat, létrehozzák a usert/db-t, stb.
+
+Ellenőrizzük a példányokat:
+
+ssh -i Downloads/vprofile-prod-key ec2-user@98.83.160.190
+sudo -i
+systemctl status mariadb
+mysql -u admin -padmin123 accounts
+show tables;
+show databases;
+exit
+exit
+exit
+
+ssh -i Downloads/vprofile-prod-key ec2-user@3.91.73.169
+sudo -i
+systemctl status memcached
+exit
+exit
+
+ssh -i Downloads/vprofile-prod-key ec2-user@54.167.246.72
+sudo -i
+systemctl status rabbitmq-server
+exit
+exit
+
+# 5. Route 53 (Private DNS)
+       Hosted Zone: vprofile.in (privát)
+       Rekordok (A típusú):
+         db01.vprofile.in -> DB privát IP
+         mc01.vprofile.in -> Memcached privát IP
+         rmq01.vprofile.in -> RabbitMQ privát IP
+         (opcionális) app01.vprofile.in
+
+Így a application.properties fájlban nem IP címeket, hanem DNS neveket használsz -> újraindításkor sincs gond
+
+Ellenőrizzük a terminalban:
+
+ssh -i Downloads/vprofile-prod-key ubuntu@52.201.243.8
+ping -c 4 db01.vprofile.in
+
+# 6. Artifact építés & feltöltés S3-ba
+     Lokálisan:
+     1. application.properties fájlban hostnevek cseréje (db01 -> db01.vprofile.in stb.)
+     2. Ellenőrzés:
+          mvn -version, java -version, aws parancs működik-e
+     3. Artifact build:
+          mvn install
+     4. AWS CLI hitelesítés:
+          aws configure
+          Access key
+          Secret access key
+          us-east-1
+          json
+        Ha valamit rosszul írtál be akkor itt tudod módosítani: .aws/credentials vagy .aws/config
+     5. Feltöltés:
+          aws s3 cp target/vprofile-v2.war s3://vprofile-las-artifactsXXXX/
+
+EC2-n (app01 – Ubuntu):
+
+ssh -i Downloads/vprofile-prod-key ubuntu@52.201.243.8
+sudo -i
+snap install aws-cli --classic
+aws
+aws s3 cp s3://vprofile-las-artifacts9133/vprofile-v2.war /tmp/
+systemctl stop tomcat10
+systemctl daemon-reload
+systemctl stop tomcat10
+rm -rf /var/lib/tomcat10/webapps/ROOT
+cp /tmp/vprofile-v2.war /var/lib/tomcat10/webapps/ROOT
+systemctl start tomcat10
+
+#. 7. Load Balancer beállítás
+      1. Target Group:
+           HTTP 8080 -> app01
+           Health check override: port 8080
+      2. ALB (Application Load Balancer):
+           Port 80 + 443 (HTTPS – ACM cert)
+           Célcsoport: az előző Target Group
+           Security Group: vprofile-ELB-sg
+      3. DNS: (GoDaddy)
+           vprofileapp.yourdomain.xyz -> ALB endpoint (CNAME)
+
+Böngészőben:
+https://vprofileapp.yourdomain.xyz
+-> Https, tanúsítvány érvényes, alkalmazás elérhető
+
+# 8. Auto Scaling Group
+     Lépések:
+     1. AMI létrehozása: app01 példány image (vprofile-app-ami)
+     2. Launch Template:
+          AMI, instance type, SG, keypair, IAM role (S3)
+     3. Auto Scaling Group:
+          Cél: pl. min=1, max=4, desired=2
+          Load balancer target group-hoz kapcsolva
+          CPU-alapú szabályozás (pl. >50% CPU -> új instance)
+
+# 9. Tesztelés
+       Bejelentkezés: admin_vp / admin_vp
+       RabbitMQ teszt: Queue létrejön
+       Memcached teszt:
+         Első lekérés: „Data is from DB”
+         Második: „Data is from cache”
+
+# Összegzés
+Funkció               Eszköz / Szolgáltatás
+Compute               EC2 (Tomcat, DB, MQ, Cache)
+Automatizált install  UserData bash scriptek
+Storage               S3 (artifact)
+DNS                   Route53 Private Hosted Zone
+Load balancing        ALB (HTTPS + cert)
+Hitelesítés           IAM user + role (CLI & EC2)
+Skálázás              Auto Scaling Group + Launch Template
+
+Egy pár Paas Szolgáltatást már használtunk (S3,Route53), de akár a többi Iaas szolgáltatást lecserélhetnénk Paas-ra.
+
+EC2 (Tomcat app szerver)  Elastic Beanstalk (Java Platform)     Auto deploy, patching, scaling out-of-the-box
+EC2 (MySQL adatbázis)     Amazon RDS (MySQL engine)             Menedzselt DB: backup, patch, HA, snapshot
+EC2 (RabbitMQ)            Amazon MQ (RabbitMQ engine)           Menedzselt MQ rendszer, HA, monitoring
+EC2 (Memcached)           Amazon ElastiCache (Redis/Memcached)  Teljesen menedzselt cache, skálázható, gyors
+ALB (Load Balancer)       Beanstalk beépített Load Balancer     Auto provisioning része
+Auto Scaling Group        Beanstalk autoscaling                 Automatikusan beépítve, szabályalapú
