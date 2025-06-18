@@ -259,3 +259,38 @@ Check it -> systemctl status nginx
   DevOps alapismeretek (VM-ek, szolgáltatások, konfigurációk)
   Alkalmazás bevezetés és hibakeresés logikai sorrendben
   Automatizálható, újrahasználható környezet
+
+====================================================================================================
+
+If we use redis instead of memcached
+# Login to the Redis vm
+vagrant ssh redis01
+
+# Verify Hosts entry, if entries missing update the it with IP and hostnames
+cat /etc/hosts
+
+# Update OS with latest patches
+sudo dnf update -y
+
+# Install EPEL repository
+sudo dnf install epel-release -y
+
+# Install Redis
+sudo dnf install redis -y
+
+# Edit Redis configuration
+sudo sed -i 's/^bind 127\.0\.0\.1 -::1/bind 0.0.0.0/' /etc/redis.conf
+sudo sed -i 's/^protected-mode yes/protected-mode no/' /etc/redis.conf
+
+# Redis service restart and enable
+sudo systemctl restart redis
+sudo systemctl enable redis
+
+# Check the Redis service
+sudo systemctl status redis
+
+# Firewall configuration (enable port 6379)
+sudo systemctl start firewalld
+sudo systemctl enable firewalld
+sudo firewall-cmd --add-port=6379/tcp --permanent
+sudo firewall-cmd --reload
